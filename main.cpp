@@ -10,7 +10,6 @@ void interruptCleaner(void) {
     // save k0 context
     "addi       $sp, $sp, -16\n"
     "sw         $k0, 0($sp)\n"
-    "sync\n"
     
     // clear Me interrupt flag on system level
     "li         $k0, 0x80000000\n"
@@ -27,11 +26,10 @@ void interruptCleaner(void) {
     "li         $k0, 0x401\n"
     "mtc0       $k0, $12\n"
     "sync\n"
-
+    
     // restore k0 context
     "lw         $k0, 0($sp)\n"
     "addi       $sp, $sp, 16\n"
-    "sync\n"
     
     // jump to inital addr
     "jr         $ra\n"
@@ -50,20 +48,16 @@ void interruptHandler(void) {
       "addi     $sp, $sp, -16\n"
       "sw       $k0, 0($sp)\n"
       "sw       $k1, 4($sp)\n"
-      "sync\n"
       
       // setup interrupt cleaner
       "la       $k0, %0\n"
       "li       $k1, 0xA0000000\n"
-      "sync\n"
       "or       $k0, $k0, $k1\n"
-      "sync\n"
       
       // make sure $ra has our ret value
       "mfc0     $k1, $14\n"
       "sync\n"
       "move     $ra, $k1\n"
-      "sync\n"
       
       // load new rpc addr
       "mtc0     $k0, $14\n"
@@ -73,7 +67,6 @@ void interruptHandler(void) {
       "lw       $k0, 0($sp)\n"
       "lw       $k1, 4($sp)\n"
       "addi     $sp, $sp, 16\n"
-      "sync\n"
       
       // exit
       "eret\n"
