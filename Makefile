@@ -3,31 +3,63 @@ PATHSRC = ./
 PATHOBJS = $(BINOUT)
 TARGET = $(BINOUT)meint
 
-CPP_FILES = $(shell ls $(PATHSRC)*.cpp)
-S_FILES = $(shell ls $(PATHSRC)*.S)
-PATHFILES = $(CPP_FILES) $(S_FILES)
+CC = psp-gcc
+CXX = psp-gcc
+AS = psp-as
+
+CPP_FILES = $(wildcard $(PATHSRC)*.cpp)
+PATHFILES = $(CPP_FILES) kcalli.S
 
 OBJS = $(notdir $(patsubst %.cpp, %.o, $(patsubst %.S, %.o, $(PATHFILES))))
 OBJS := $(sort $(OBJS:%.o=$(PATHOBJS)%.o))
 
-CFLAGS = -Ofast -G0 -Wall -fno-pic -I./kernel/src \
+PSPSDK = $(shell psp-config --pspsdk-path)
+
+CFLAGS = -I. -I$(PSPSDK)/include -I/usr/local/pspdev/psp/sdk/include -Ofast -G0 -Wall -fno-pic \
+         -I./kernel/src -D_PSP_FW_VERSION=660 \
          -Wextra -Werror
 
-CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti  -std=c++11
-ASFLAGS = $(CFLAGS)
+CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti -std=c++11
+ASFLAGS = $(CFLAGS) -x assembler-with-cpp
+LDFLAGS = -L. -L$(PSPSDK)/lib -L/usr/local/pspdev/psp/sdk/lib \
+          -Wl,-zmax-page-size=128 -Wl,-q
 
-LIBS = -lpsppower
+LIBS = -lpspdebug -lpspdisplay -lpspge -lpspctrl \
+       -lpspnet -lpspnet_apctl -lpspsdk -lpspkernel -lpspuser \
+       -lpsppower -lc
 
 PSP_EBOOT_SFO = $(BINOUT)PARAM.SFO
-EXTRA_TARGETS = $(BINOUT)EBOOT.PBP
-PSP_EBOOT = $(EXTRA_TARGETS)
-PSP_EBOOT_TITLE = Me Interrupt Stuff
+PSP_EBOOT_TITLE = Me Software Interrupt
 
-PSPSDK=$(shell psp-config --pspsdk-path)
-include $(PSPSDK)/lib/build.mak
+.PHONY: kernel
 
-$(PATHOBJS)%.o: $(PATHSRC)%.S
-	$(CXX) -o $@ -c $< $(ASFLAGS)
+all: kernel $(TARGET).elf $(BINOUT)EBOOT.PBP
+
+kernel:
+	$(MAKE) -C ./kernel
+
+kcalli.S: kernel
+	@
+  
+  
+$(TARGET).elf: $(OBJS)
+	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@ $(LIBS)
 
 $(PATHOBJS)%.o: $(PATHSRC)%.cpp
-	$(CXX) -o $@ -c $< $(CXXFLAGS)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(PATHOBJS)%.o: $(PATHSRC)%.S
+	$(CC) $(ASFLAGS) -c $< -o $@
+
+$(BINOUT)EBOOT.PBP: $(TARGET).elf
+	psp-fixup-imports $(TARGET).elf
+	mksfo "$(PSP_EBOOT_TITLE)" $(PSP_EBOOT_SFO)
+	psp-strip $(TARGET).elf -o $(TARGET)_strip.elf
+	pack-pbp $(BINOUT)EBOOT.PBP $(PSP_EBOOT_SFO) NULL \
+	NULL NULL NULL \
+	NULL $(TARGET)_strip.elf NULL
+	rm -f $(TARGET)_strip.elf
+
+clean:
+	-rm -f $(TARGET).elf $(TARGET).prx $(OBJS) $(BINOUT)EBOOT.PBP $(PSP_EBOOT_SFO) kcalli.S $(BINOUT)kcalli.prx
+	$(MAKE) -C ./kernel clean

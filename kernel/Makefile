@@ -1,11 +1,11 @@
 BINOUT = ./bin/
 PATHSRC = ./src/
+
 TARGET_NAME = kcalli
 TARGET = $(BINOUT)$(TARGET_NAME)
 
-CC = psp-gcc
-LD = psp-gcc
 FIXUP = psp-fixup-imports
+CC = psp-gcc
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 PSPDEV = $(shell psp-config --pspdev-path)
@@ -32,7 +32,7 @@ FINAL_TARGET = $(TARGET).prx
 all: $(FINAL_TARGET)
 
 $(TARGET).elf: $(OBJS)
-	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@ && $(FIXUP) $@ || ($(MAKE) handle_fixup_error)
+	$(CC) $(LDFLAGS) $^ $(LIBS) -o $@ && $(FIXUP) $@
 
 %.prx: %.elf
 	psp-prxgen $< $@
@@ -42,10 +42,6 @@ $(BINOUT)%.o: $(PATHSRC)%.c
 
 %.c: %.exp
 	psp-build-exports -b $< > $@
-
-handle_fixup_error:
-	@echo "Error during fixup: no .lib.stub section found. Retrying..."
-	$(MAKE) all
 
 clean:
 	-rm -f $(FINAL_TARGET) $(TARGET).elf $(OBJS)

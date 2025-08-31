@@ -90,73 +90,92 @@ void meInitExceptions() {
   setStatus(0);
   asm volatile(
     // setup interrupt handler
-    "la       $k0, %0\n"
-    "li       $k1, 0xA0000000\n"
-    "or       $k0, $k0, $k1\n"
+    "la       $k0, %0             \n"
+    "li       $k1, 0xA0000000     \n"
+    "or       $k0, $k0, $k1       \n"
+    "cache    0x8, 0($k0)         \n"
+    "sync                         \n"
     // load handler addr
-    "sync\n"
-    "mtc0   $k0, $25\n"
-    "sync"
+    "mtc0   $k0, $25              \n"
+    "sync                         \n"
     :
     : "i" (interruptHandler)
   );
   // enable Me interrupt on system level
-  asm("sync");
-  vrg(0xBC300008) = 0x80000000;
-  asm("sync");
+  hw(0xBC300008) = 0x80000000;
+  asm volatile("sync");
   // enable external interrupt on cp0 level
   setStatus(0b100 << 8 | 1);
+}
+
+int sendSoftInterrupt() {
+  asm("sync");
+  hw(0xBC100044) = 1;
+  asm("sync");
+  return 0;
 }
 
 volatile u32* mem = nullptr;
 #define meCounter       mem[0]
 #define meProof         mem[1]
 #define meSendInterrupt mem[3]
+#define meExit          mem[4]
 
 __attribute__((noinline, aligned(4)))
-static int meLoop() {
-  meDCacheWritebackInvalidAll(); // making sure mem is available
+static void meLoop() {
+  // making sure waiting for mem
+  do {
+    meDcacheWritebackInvalidateAll();
+  } while(!mem);
+  
   meInitExceptions();
   do {
     if (meSendInterrupt) {
-      vrg(0xBC100044) = 1;
+      sendSoftInterrupt();
       meSendInterrupt = 0;
     }
-    meProof = vrg(0xA0000000);
+    meProof = hw(0xA0000000);
     meCounter++;
-  } while(!uncached(_meExit));
-  return uncached(_meExit);
+  } while(meExit == 0);
+  meExit = 2;
+  meHalt();
 }
 
 extern char __start__me_section;
 extern char __stop__me_section;
 __attribute__((section("_me_section"), noinline, aligned(4)))
 int meHandler() {
+  hw(0xbc100050) = 0x7f;
+  hw(0xbc100004) = 0xffffffff; // clear NMI
+  hw(0xbc100040) = 2;          // allow 64MB ram
   asm("sync");
-  vrg(0xbc100050) = 0x7f;
-  vrg(0xbc100004) = 0xffffffff; // clear NMI
-  vrg(0xbc100040) = 2; // allow 64MB ram
-  asm("sync");
-  ((FCall)_meLoop)();
+  
+  asm volatile(
+    "li          $k0, 0x30000000     \n"
+    "mtc0        $k0, $12            \n"
+    "sync                            \n"
+    "la          $k0, %0             \n"
+    "li          $k1, 0x80000000     \n"
+    "or          $k0, $k0, $k1       \n"
+    "cache       0x8, 0($k0)         \n"
+    "sync                            \n"
+    "jr          $k0                 \n"
+    "nop\n"
+    :
+    : "i" (meLoop)
+    : "k0"
+  );  
+  
   return 0;
 }
 
-static int initMe() {
-  memcpy((void *)0xbfc00040, (void*)((u32)&__start__me_section), me_section_size);
-  _meLoop = 0xA0000000 | (u32)meLoop;
-  meDCacheWritebackInvalidAll();
-  // reset and start me
-  vrg(0xBC10004C) = 0b100;
-  asm("sync");
-  vrg(0xBC10004C) = 0x0;
-  asm("sync"); 
-  return 0;
-}
-
-int cpuSendInterrupt() {
-  asm("sync");
-  vrg(0xBC100044) = 1;
-  asm("sync");
+static int meInit() {
+  #define me_section_size (&__stop__me_section - &__start__me_section)
+  memcpy((void *)ME_HANDLER_BASE, (void*)&__start__me_section, me_section_size);
+  sceKernelDcacheWritebackInvalidateAll();
+  hw(0xbc10004c) = 0x04;        // reset enable, just the me
+  hw(0xbc10004c) = 0x0;         // disable reset to start the me
+  asm volatile("sync");
   return 0;
 }
 
@@ -167,24 +186,31 @@ int cpuInterruptHandler() {
   return -1;
 }
 
+void meWaitExit() {
+  meExit = 1;
+  do {
+    asm volatile("sync");
+  } while(meExit < 2);
+}
+
 int main() {
   scePowerSetClockFrequency(333, 333, 166);
-  if (pspSdkLoadStartModule("ms0:/PSP/GAME/me/kcalli.prx", PSP_MEMORY_PARTITION_KERNEL) < 0){
+  if (pspSdkLoadStartModule("ms0:/PSP/GAME/me/kcalli.prx", PSP_MEMORY_PARTITION_KERNEL) < 0) {
     sceKernelExitGame();
     return 0;
   }
-  if(kernelRegisterIntrHandler(0x1f, 1, (void*)(0x80000000 | (u32)cpuInterruptHandler)) < 0) {
+  if(kernelRegisterIntrHandler(0x1f, 1, (void*)(CACHED_KERNEL_MASK | (u32)cpuInterruptHandler)) < 0) {
     sceKernelExitGame();
   }
   
-  void* const _mem = (u32*)memalign(16, sizeof(u32) * 4);
-  mem = (u32*)(0x40000000 | (u32)_mem);
+  meGetUncached32(&mem, 4);
+
+  kcall(&meInit);
   
-  kcall(&initMe);
   pspDebugScreenInit();
   SceCtrlData ctl;
   do {
-    meDCacheWritebackInvalidAll();
+    sceKernelDcacheWritebackInvalidateAll();
     sceCtrlPeekBufferPositive(&ctl, 1);
     pspDebugScreenSetXY(0, 1);
     pspDebugScreenPrintf("Me Counter %u          ", meCounter);
@@ -199,7 +225,7 @@ int main() {
       }
       if (up && ctl.Buttons) {
         if (ctl.Buttons & PSP_CTRL_TRIANGLE) {
-          kcall(&cpuSendInterrupt);
+          kcall(&sendSoftInterrupt);
         } else if (ctl.Buttons & PSP_CTRL_SQUARE){
           meSendInterrupt = 1;
         }
@@ -209,8 +235,9 @@ int main() {
     sceDisplayWaitVblankStart();
   } while(!(ctl.Buttons & PSP_CTRL_HOME));
   
-  meExit();
-  free(_mem);
+  meWaitExit();
+  meGetUncached32(&mem, 0);
+  
   pspDebugScreenClear();
   pspDebugScreenSetXY(0, 1);
   pspDebugScreenPrintf("Exiting...");
