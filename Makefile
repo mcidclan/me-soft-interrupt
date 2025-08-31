@@ -24,9 +24,8 @@ ASFLAGS = $(CFLAGS) -x assembler-with-cpp
 LDFLAGS = -L. -L$(PSPSDK)/lib -L/usr/local/pspdev/psp/sdk/lib \
           -Wl,-zmax-page-size=128 -Wl,-q
 
-LIBS = -lpspdebug -lpspdisplay -lpspge -lpspctrl \
-       -lpspnet -lpspnet_apctl -lpspsdk -lpspkernel -lpspuser \
-       -lpsppower -lc
+LIBS = -lpsppower -lpspdebug -lpspdisplay -lpspge -lpspctrl \
+       -lpspsdk -lc -lpspuser -lpspkernel
 
 PSP_EBOOT_SFO = $(BINOUT)PARAM.SFO
 PSP_EBOOT_TITLE = Me Software Interrupt
